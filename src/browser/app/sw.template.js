@@ -7,8 +7,12 @@
  *   cached at install, so the app opens with no network.
  * - Other same-origin files are cached the first time they are fetched;
  *   chunk names carry content hashes, so a cached copy is always right.
- * - Page navigations (/, /chat/…) are answered with the cached index.html:
- *   the app routes on the device.
+ * - Page navigations (/, /chat/…) go to the network first — so a host's
+ *   login in front of the site (Cloudflare Access) and updates always get
+ *   through — and fall back to the cached index.html when offline (the app
+ *   routes on the device).
+ * - The host's own paths (/cdn-cgi/…: Cloudflare Access login callbacks
+ *   and the like) are never touched.
  * - Google Fonts: served from cache, refreshed in the background.
  * - Nothing else is touched: model providers are always reached directly.
  * - A new version installs in the background and takes over once the app
@@ -53,10 +57,12 @@ self.addEventListener("fetch", (event) => {
 		return;
 	}
 
-	if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+	if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/cdn-cgi/")) return;
 
 	if (req.mode === "navigate") {
-		event.respondWith(caches.match("/index.html", { cacheName: CACHE }).then((cached) => cached ?? fetch(req)));
+		event.respondWith(
+			fetch(req).catch(() => caches.match("/index.html", { cacheName: CACHE }).then((cached) => cached ?? Response.error())),
+		);
 		return;
 	}
 

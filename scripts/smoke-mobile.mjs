@@ -52,6 +52,11 @@ const TYPES = {
 };
 const server = http.createServer((req, res) => {
 	const pathname = decodeURIComponent(new URL(req.url, "http://x").pathname);
+	// Stand-in for a host's own path (Cloudflare Access's login callback).
+	if (pathname.startsWith("/cdn-cgi/")) {
+		res.writeHead(200, { "Content-Type": "text/plain" }).end("host path reached");
+		return;
+	}
 	let file = path.join(DIST, path.normalize(pathname).replace(/^([/\\])+/, ""));
 	// Single-page-app fallback, like Cloudflare Pages: unknown paths → index.html.
 	if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, "index.html");
@@ -502,6 +507,11 @@ try {
 		const reg = await navigator.serviceWorker.ready;
 		return reg.active?.state;
 	});
+	// The service worker must let the host's own paths through (Cloudflare
+	// Access's login callback lives under /cdn-cgi/) — it used to answer
+	// every page load with the cached app, which broke the login.
+	await page.goto(`${base}/cdn-cgi/access/authorized?smoke=1`);
+	check((await page.textContent("body")).includes("host path reached"), "service worker lets /cdn-cgi/ (Cloudflare Access login) through");
 	await context.setOffline(true);
 	await page.goto(`${base}/chat/new`);
 	const offline = await page.waitForSelector("[contenteditable=true]", { timeout: 15_000 }).then(() => true, () => false);
