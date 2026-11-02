@@ -246,7 +246,7 @@ npm run mobile:smoke   # dev build + the end-to-end browser check below
 ```
 
 `scripts/smoke-mobile.mjs` serves `dist-mobile/` with single-page-app fallback and drives the real app at iPhone size in headless Chromium. Anthropic is replaced by scripted streaming replies, so no key, network, or spend is involved. The checks, in order:
-1. Configure a key and models; start a lesson from the home composer.
+1. The idle app's event stream stays quiet (see the Safari freeze below). Configure a key and models; start a lesson from the home composer.
 2. The agent's question appears; answer it and the reply streams in.
 3. The provider request carried the bundled prompt, the tools (learner-file set included), the browser-access header, and the on-device key. Dictate is hidden.
 4. Extraction runs on the device (scripted extractor and auditor) and the graph holds the ideas. The graph toolbar fits beside the sidebar button. After a pinch-zoom, a double-tap on empty space re-frames every node between the toolbar and the composer, and a tap on a node opens its card.
@@ -275,7 +275,9 @@ The demo and visual-maker *jobs* use these same engines through the same job run
 
 ## Known gaps
 
-- **Not yet run on a real iPhone or against the live Anthropic API.** All browser verification is headless Chromium with scripted provider replies; this build environment reaches neither. Safari-specific behavior is the main risk: the share sheet, downloads from a home-screen app, IndexedDB persistence, and Safari before 17.4 (covered by small fallbacks).
+- **Not yet run on a real iPhone or against the live Anthropic API.** The smoke test runs in headless Chromium with scripted provider replies; this build environment reaches neither.
+  - **Safari freeze (fixed):** the phone build's `fs.promises.open` shim could only read, so the ChatGPT credential store failed on every call. Each failure announced "subscriptions changed", and the page re-checked on each announcement, hundreds of times a second. Chromium kept up, but Safari's engine froze: the first screen showed, no button responded, and reloads showed `ERR_FAILED`. The shim now has Node's open flags (`tests/browser-shims.test.ts` compares it with real `node:fs`).
+  - **Checked once in WebKit (Playwright's Safari engine):** load, tap, reload with the service worker, and, with the service worker blocked, lessons, extraction and the graph. The full smoke can't run there: once a service worker controls the page, Playwright's WebKit stops intercepting the scripted provider, and the pinch step needs Chromium's CDP. Safari-specific behavior is the main risk: the share sheet, downloads from a home-screen app, IndexedDB persistence, and Safari before 17.4 (covered by small fallbacks).
 - **On first open the graph is framed before its layout finishes settling**, so it can spread past the screen edges; double-tap re-frames it. The desktop app has the same behavior.
 - **Node labels appear when zoomed in.** Desktop's hover glow has no touch equivalent; a tap shows the node's card instead.
 - **The demo-builder and visual-maker jobs** haven't been run end to end with a scripted model; their engines were tested directly (above).

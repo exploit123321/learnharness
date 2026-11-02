@@ -195,19 +195,80 @@ export const promises = {
 	access: wrap(accessSync),
 	mkdtemp: wrap(mkdtempSync),
 	chmod: wrap(chmodSync),
-	async open(path: unknown, _flags?: string) {
-		const bytes = toBytes(vfs.readFile(pathOf(path)));
-		return {
-			async read(buffer: Uint8Array, offset: number, length: number, position: number | null) {
-				const start = position ?? 0;
-				const chunk = bytes.subarray(start, start + length);
-				buffer.set(chunk, offset);
-				return { bytesRead: chunk.byteLength, buffer };
-			},
-			async close() {},
-		};
-	},
+	open: openHandle,
 };
+
+/** fs.promises.open, Node's flag semantics for the forms the bundled code
+ *  uses: "r" (also a directory, for the directory fsync after an atomic
+ *  rename), "w" (create/truncate), "a" (append), "x" (fail if it exists),
+ *  "+" (read and write). Writes go straight to the file system, so sync()
+ *  and close() have nothing left to do. A read-only open() here once made
+ *  the ChatGPT credential store fail on every call on the phone, and its
+ *  error notifications fed an endless refresh loop that froze Safari. */
+async function openHandle(path: unknown, flags: string = "r", _mode?: number) {
+	const p = pathOf(path);
+	if (!/^(r|r\+|rs\+|w|wx|xw|w\+|wx\+|xw\+|a|ax|xa|a\+|ax\+|xa\+|as|as\+)$/.test(flags)) throw new vfs.FsError("EINVAL", "open", p);
+	const kind = flags.replace(/[x+s]/g, "")[0] as "r" | "w" | "a";
+	const readable = kind === "r" || flags.includes("+");
+	let isDirectory = false;
+	if (kind === "r") {
+		isDirectory = vfs.stat(p, "open").isDirectory;
+		if (isDirectory && flags !== "r") throw new vfs.FsError("EISDIR", "open", p);
+	} else {
+		const exists = existsSync(p);
+		if (exists && vfs.stat(p, "open").isDirectory) throw new vfs.FsError("EISDIR", "open", p);
+		if (exists && flags.includes("x")) throw new vfs.FsError("EEXIST", "open", p);
+		if (kind === "w" || !exists) vfs.writeFile(p, new Uint8Array(0));
+	}
+	const current = () => toBytes(vfs.readFile(p));
+	let position = kind === "a" ? current().byteLength : 0;
+	const writeAt = (bytes: Uint8Array, at: number | null | undefined): number => {
+		if (kind === "r" && !flags.includes("+")) throw new vfs.FsError("EBADF", "write", p);
+		const before = current();
+		const start = kind === "a" ? before.byteLength : (at ?? position);
+		const next = new Uint8Array(Math.max(before.byteLength, start + bytes.byteLength));
+		next.set(before);
+		next.set(bytes, start);
+		vfs.writeFile(p, next);
+		if (at === null || at === undefined || kind === "a") position = start + bytes.byteLength;
+		return bytes.byteLength;
+	};
+	return {
+		async read(buffer: Uint8Array, offset = 0, length = buffer.byteLength - offset, at: number | null = null) {
+			if (isDirectory) throw new vfs.FsError("EISDIR", "read", p);
+			if (!readable) throw new vfs.FsError("EBADF", "read", p);
+			const start = at ?? position;
+			const chunk = current().subarray(start, start + length);
+			buffer.set(chunk, offset);
+			if (at === null) position = start + chunk.byteLength;
+			return { bytesRead: chunk.byteLength, buffer };
+		},
+		async write(data: unknown, offsetOrPosition?: number | null, lengthOrEncoding?: number | BufferEncoding, at?: number | null) {
+			if (typeof data === "string") {
+				const bytes = Buffer.from(data, typeof lengthOrEncoding === "string" ? lengthOrEncoding : "utf8");
+				return { bytesWritten: writeAt(bytes, offsetOrPosition), buffer: data };
+			}
+			const buffer = data as Uint8Array;
+			const offset = offsetOrPosition ?? 0;
+			const length = typeof lengthOrEncoding === "number" ? lengthOrEncoding : buffer.byteLength - offset;
+			return { bytesWritten: writeAt(buffer.subarray(offset, offset + length), at), buffer };
+		},
+		async writeFile(data: unknown, options?: BufferEncoding | { encoding?: BufferEncoding }) {
+			const encoding = typeof options === "string" ? options : (options?.encoding ?? "utf8");
+			writeAt(typeof data === "string" ? Buffer.from(data, encoding) : toBytes(toContent(data)), null);
+		},
+		async readFile(options?: EncodingArg) {
+			if (isDirectory) throw new vfs.FsError("EISDIR", "read", p);
+			return decode(vfs.readFile(p), encodingOf(options ?? null));
+		},
+		async stat() {
+			return statSync(p) as Stats;
+		},
+		async sync() {},
+		async datasync() {},
+		async close() {},
+	};
+}
 
 const fs = {
 	readFileSync,

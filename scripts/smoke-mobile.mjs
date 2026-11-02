@@ -297,9 +297,26 @@ try {
 		});
 	});
 
+	// Count the on-device server-event frames (the stream the page reads).
+	await context.addInitScript(() => {
+		const enqueue = ReadableStreamDefaultController.prototype.enqueue;
+		globalThis.__lhFrames = 0;
+		ReadableStreamDefaultController.prototype.enqueue = function (...args) {
+			globalThis.__lhFrames++;
+			return enqueue.apply(this, args);
+		};
+	});
+
 	// ── 1. configure, start a lesson ─────────────────────────────────────
 	await page.goto(`${base}/`);
 	await page.waitForSelector("[contenteditable=true]", { timeout: 30_000 });
+	// An idle app is quiet. (A failing credential store once re-announced
+	// "subscriptions changed" on every status check; the page re-checked on
+	// every announcement — hundreds a second, and a frozen page in Safari.)
+	const framesBefore = await page.evaluate(() => globalThis.__lhFrames);
+	await page.waitForTimeout(2000);
+	const idleFrames = (await page.evaluate(() => globalThis.__lhFrames)) - framesBefore;
+	check(idleFrames < 10, `the idle app's event stream is quiet (${idleFrames} frames in 2 s)`);
 	const configured = await page.evaluate(async () => {
 		const put = (u, b) => fetch(u, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
 		const key = await put("/api/keys/ANTHROPIC_API_KEY", { value: "sk-ant-api03-" + "x".repeat(93) + "AA" });

@@ -97,6 +97,59 @@ test("fs: files, dirs, errors and listing behave like node:fs", async () => {
 	assert.equal(fs.readFileSync("/bin/x.png", "base64"), "AQID");
 });
 
+test("fs.promises.open: the atomic-store pattern and flags behave like node:fs", async () => {
+	// The ChatGPT and subscription credential stores write a temp file with
+	// open(…, "wx"), then rename it and fsync the directory. Run the same
+	// script against the shim and against real node:fs and compare.
+	const nodeFs = await import("node:fs/promises");
+	const os = await import("node:os");
+	const script = async (io: typeof fsp, root: string) => {
+		const out: unknown[] = [];
+		const code = async (fn: () => Promise<unknown>) => {
+			try {
+				await fn();
+				return "ok";
+			} catch (err) {
+				return (err as { code?: string }).code;
+			}
+		};
+		await io.mkdir(`${root}/auth`, { recursive: true });
+		const handle = await io.open(`${root}/auth/c.json.tmp`, "wx", 0o600);
+		await handle.writeFile('{"v":1}\n');
+		await handle.sync();
+		await handle.close();
+		await io.rename(`${root}/auth/c.json.tmp`, `${root}/auth/c.json`);
+		const dir = await io.open(`${root}/auth`, "r");
+		await dir.sync();
+		await dir.close();
+		out.push(await io.readFile(`${root}/auth/c.json`, "utf8"));
+		out.push(await code(() => io.open(`${root}/auth/c.json`, "wx")));
+		out.push(await code(() => io.open(`${root}/auth/none.json`, "r")));
+		out.push(await code(() => io.open(`${root}/auth`, "w")));
+		const log = await io.open(`${root}/auth/log`, "a");
+		await log.write("one ");
+		await log.write("two");
+		await log.close();
+		const truncate = await io.open(`${root}/auth/c.json`, "w");
+		await truncate.close();
+		out.push(await io.readFile(`${root}/auth/log`, "utf8"), await io.readFile(`${root}/auth/c.json`, "utf8"));
+		const reader = await io.open(`${root}/auth/log`, "r");
+		const buf = new Uint8Array(4);
+		const first = await reader.read(buf, 0, 4, null);
+		const second = await reader.read(buf, 0, 4, null);
+		out.push(first.bytesRead, second.bytesRead, new TextDecoder().decode(buf.subarray(0, second.bytesRead)));
+		await reader.close();
+		return out;
+	};
+	vfs.resetForTests();
+	const real = await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "lh-open-"));
+	try {
+		assert.deepEqual(await script(fsp, "/x"), await script(nodeFs as unknown as typeof fsp, real));
+	} finally {
+		await nodeFs.rm(real, { recursive: true, force: true });
+	}
+});
+
 test("vfs: every mutation reaches the persistence sink; seeds do not", () => {
 	vfs.resetForTests();
 	const ops: string[] = [];
