@@ -1,0 +1,18 @@
+// Cloudflare deployment of the PHONE app (docs/mobile.md) — static files
+// only, no server. `wrangler deploy` (Cloudflare's default deploy command)
+// first runs the phone build, then uploads dist-mobile as the Worker's
+// static assets. Without this file Cloudflare auto-detects Next.js and tries
+// to deploy the desktop server instead, which is not what the phone needs.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "learnharness",
+	"compatibility_date": "2026-10-01",
+	"build": {
+		"command": "npm run mobile:dist"
+	},
+	"assets": {
+		"directory": "./dist-mobile",
+		// The app routes on the device: unknown paths get index.html.
+		"not_found_handling": "single-page-application"
+	}
+}

@@ -19,11 +19,10 @@ Standalone, API keys only. Claude subscription logins need the `claude` CLI, whi
 
 **1. Host it (free, Cloudflare Pages).** Pick one route.
 
-- **Connect the GitHub repo**, which redeploys on every push. In the Cloudflare dashboard, go to **Workers & Pages → Create → Pages → Connect to Git**, pick your fork, and set:
-  - Production branch: the branch to publish
-  - Build command: `npm run mobile:dist`
-  - Build output directory: `dist-mobile`
-  - Environment variables: `NODE_VERSION` = `22`, and `ELECTRON_SKIP_BINARY_DOWNLOAD` = `1` (skips the desktop Electron download during install)
+- **Connect the GitHub repo (a Worker)**, which redeploys on every push. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository**, pick your fork and the branch to publish, and keep the default **deploy command** `npx wrangler deploy`. The repo's `wrangler.jsonc` does the rest: it runs `npm run mobile:dist` and serves `dist-mobile` as static files, with `index.html` for unknown paths. Without that file, Cloudflare would detect Next.js and try to deploy the desktop server.
+  - **Build command:** leave it empty, or set `npm run mobile:dist`. The default `npm run build` builds the desktop app first, which works but wastes about a minute.
+  - **Optional build variable:** `ELECTRON_SKIP_BINARY_DOWNLOAD` = `1`, which skips the desktop Electron download.
+- **Or connect it as a Pages project:** go to **Workers & Pages → Create → Pages → Connect to Git**, and set build command `npm run mobile:dist`, output directory `dist-mobile`, and environment variables `NODE_VERSION` = `22` and `ELECTRON_SKIP_BINARY_DOWNLOAD` = `1`.
 - **Or upload from your computer:**
 
   ```bash
@@ -35,11 +34,14 @@ Standalone, API keys only. Claude subscription logins need the `claude` CLI, whi
   ```
 
   ```bash
-  npx wrangler pages deploy dist-mobile --project-name learnharness
+  npx wrangler deploy
   ```
+
+  (This uses `wrangler.jsonc`. For a Pages project, use `npx wrangler pages deploy dist-mobile --project-name learnharness` instead.)
 
 If the first build fails:
 - **Is it building `main`?** The phone app isn't on `main` until this branch is merged, so a `main` build fails with a missing `mobile:dist` script.
+- **Does the log show "Framework: Next.js" and `opennextjs-cloudflare`?** Then the branch it built has no `wrangler.jsonc`, and Cloudflare tried to deploy the desktop server.
 - **Changing the production branch** (Settings → Builds → Branch control) does **not** start a build by itself. The next push to that branch does.
 - **To build without pushing**, create a deploy hook (Settings → Builds → Deploy hooks) for the branch, then open its URL with a POST, e.g. `curl -X POST <hook URL>`.
 
