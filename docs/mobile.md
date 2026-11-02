@@ -38,6 +38,11 @@ Standalone, API keys only. Claude subscription logins need the `claude` CLI, whi
   npx wrangler pages deploy dist-mobile --project-name learnharness
   ```
 
+If the first build fails:
+- **Is it building `main`?** The phone app isn't on `main` until this branch is merged, so a `main` build fails with a missing `mobile:dist` script.
+- **Changing the production branch** (Settings → Builds → Branch control) does **not** start a build by itself. The next push to that branch does.
+- **To build without pushing**, create a deploy hook (Settings → Builds → Deploy hooks) for the branch, then open its URL with a POST, e.g. `curl -X POST <hook URL>`.
+
 Cloudflare serves `index.html` for every unknown path, which the app's on-device routing needs. `dist-mobile/_headers` sets caching: the page and service worker always revalidate, and hashed chunks are immutable.
 
 **2. Install.** Open `https://<project>.pages.dev` in **Safari**, then **Share → Add to Home Screen**. Open it from the home screen.
