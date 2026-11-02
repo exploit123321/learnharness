@@ -50,6 +50,9 @@ export interface ServerEvents {
 	 *  the chat; the client mirrors it by disabling the composer/dock
 	 *  submit. */
 	"compaction-changed": { chatId: string; running: boolean };
+	/** The knowledge graph changed WITHOUT an extraction run (PC ↔ phone
+	 *  sync pulled or merged graph files): open graph views refetch. */
+	"graph-changed": Record<string, never>;
 }
 
 export type ServerEventType = keyof ServerEvents;
@@ -66,6 +69,7 @@ export const SERVER_EVENT_TYPES = [
 	"subscriptions-changed",
 	"record-changed",
 	"compaction-changed",
+	"graph-changed",
 ] as const satisfies readonly ServerEventType[];
 
 /** One notification: the type discriminates the payload. */

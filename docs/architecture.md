@@ -342,7 +342,7 @@ Sub-agents **verify, never one-shot**: the demo-builder headlessly executes its 
 
 ## 6. The knowledge graph — two channels, one writer
 
-**The extraction pipeline is the sole graph writer.** Nothing else appends to `data/graph/*.jsonl` — not the teacher, not the server, not a migration script. (The one sanctioned exception: `PUT /api/graph/positions` writes layout positions only, sanitized, with an incremental layout settle when the graph grew. Backfill scripts bypass this by design, as one-time operations.)
+**The extraction pipeline is the sole graph writer.** Nothing else appends to `data/graph/*.jsonl` — not the teacher, not the server, not a migration script. (The one sanctioned exception: `PUT /api/graph/positions` writes layout positions only, sanitized, with an incremental layout settle when the graph grew. Backfill scripts bypass this by design, as one-time operations.) PC ↔ phone sync (`src/server/sync.ts`, docs/mobile.md) is the second sanctioned exception, for chat records and job records as well as the graph. It replaces whole data files with another device's copy, or with a line-merged graph file, and does so only while no turn, compaction or extraction is touching them. Then it emits `record-changed`, `chats-changed`, `graph-changed` and `jobs-changed`, so open views reload.
 
 ```mermaid
 flowchart TB
@@ -462,7 +462,7 @@ For ordinary Next web/dev, `src/server/web-subscriptions.ts` composes these same
 | Law |
 |---|
 | **One composition root per concern** — `stores.ts` (storage), `chat-handler.ts` (a turn) |
-| **One writer per ledger** — the merger is the sole graph writer; chat records written only by the turn pipeline; job records only by the runner; positions PUT is the only sanctioned graph-adjacent exception |
+| **One writer per ledger** — the merger is the sole graph writer; chat records written only by the turn pipeline; job records only by the runner; positions PUT and PC ↔ phone sync (whole-file replacement while idle) are the sanctioned exceptions |
 | **The store never decides** — adapters persist and shape-guard; merge/dedup/derivation semantics are reader-side, in core |
 | **Derived, never dual-tracked** — append-only evidence; every state recomputed at read (snapshot, plan statuses, phases, costs, coverage) |
 | **Idempotency via deterministic keys** — steer ids, ledger refs, coverage fingerprints, source content fingerprints, cluster content hashes; re-running anything converges |

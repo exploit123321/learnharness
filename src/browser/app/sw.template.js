@@ -5,8 +5,12 @@
  *
  * - The app shell (index.html + the scripts the app loads at start) is
  *   cached at install, so the app opens with no network.
- * - Other same-origin files are cached the first time they are fetched;
- *   chunk names carry content hashes, so a cached copy is always right.
+ * - The app's other STATIC files (the build's own folders, below) are
+ *   cached the first time they are fetched; chunk names carry content
+ *   hashes, so a cached copy is always right. Nothing else is ever cached:
+ *   dynamic paths (/sync/ — the PC ↔ phone sync service — /api/, …) always
+ *   reach the network. (Caching /sync/ once replayed a stale file list and
+ *   made sync delete data — never again.)
  * - Page navigations (/, /chat/…) go to the network first — so a host's
  *   login in front of the site (Cloudflare Access) and updates always get
  *   through — and fall back to the cached index.html when offline (the app
@@ -22,6 +26,8 @@ const VERSION = "__LH_VERSION__";
 const SHELL = __LH_SHELL__;
 const CACHE = `lh-app-${VERSION}`;
 const FONTS = "lh-fonts";
+/** The build's static folders/files (scripts/build-mobile.mjs output). */
+const STATIC = /^\/(app|chunks|assets|icons|fonts|worklets|siwc|node_modules\/pdfjs-dist)\/|^\/manifest\.webmanifest$/;
 
 self.addEventListener("install", (event) => {
 	event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
@@ -57,14 +63,18 @@ self.addEventListener("fetch", (event) => {
 		return;
 	}
 
-	if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/cdn-cgi/")) return;
+	if (url.origin !== self.location.origin) return;
 
 	if (req.mode === "navigate") {
+		// The host's own paths (Cloudflare Access login callbacks) pass untouched.
+		if (url.pathname.startsWith("/cdn-cgi/")) return;
 		event.respondWith(
 			fetch(req).catch(() => caches.match("/index.html", { cacheName: CACHE }).then((cached) => cached ?? Response.error())),
 		);
 		return;
 	}
+
+	if (!STATIC.test(url.pathname)) return;
 
 	event.respondWith(
 		caches.open(CACHE).then(async (cache) => {

@@ -28,6 +28,13 @@ async function main(): Promise<void> {
 	const root = document.getElementById("root");
 	if (!root) throw new Error("missing #root");
 	createRoot(root).render(<App />);
+	// PC ↔ phone sync: catch up whenever the app comes back to the
+	// foreground (a no-op until sync is turned on in Settings → Sync).
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "visible") {
+			void fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync" }) }).catch(() => {});
+		}
+	});
 	// Offline support (src/browser/app/sw.template.js). Best effort: an
 	// unsupported or failed registration leaves the app working online.
 	// The native app (Capacitor) serves the files from the device already.

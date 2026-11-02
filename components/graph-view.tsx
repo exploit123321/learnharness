@@ -1156,6 +1156,8 @@ export function GraphView({
 		}, 250);
 	});
 	useServerResync(() => readPipelineStatus());
+	// Sync pulled or merged graph files from another device: refetch.
+	useServerEvent("graph-changed", () => setRefreshTick((t) => t + 1));
 	useEffect(() => {
 		readPipelineStatus();
 		return () => {

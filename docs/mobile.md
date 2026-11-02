@@ -62,6 +62,40 @@ Cloudflare serves `index.html` for every unknown path, which the app's on-device
 2. Get the zip onto the phone (AirDrop, iCloud Drive, …).
 3. In the app, go to **Settings → Phone data → Restore**.
 
+## Sync between PC and phone
+
+Your own Cloudflare site keeps the PC and the phone in step (owner-approved plan). The rules:
+- **Sessions:** the most recent edit wins.
+- **Knowledge graph:** merged line by line, so ideas added or removed on either device are kept.
+- **Settings stay per device.** That covers API keys, models, prompt overrides, graph display settings and "Your files".
+- **Encrypted end to end.** Everything is encrypted with your passphrase before it leaves a device, so the site stores only ciphertext: file names, contents and sizes in chunks.
+
+**Set up.**
+1. **Deploy this branch** (above). The same Worker that serves the app also runs the sync service at `/sync/*`, and `wrangler deploy` creates its D1 database (`learnharness-sync`) by itself on the first deploy. There is nothing to configure in the dashboard.
+2. **If the site is behind Cloudflare Access**, turn Access off, or add a *Bypass* policy for the path `/sync/*`. The PC's requests carry no Access login, and the passphrase already guards the data.
+3. **Turn on sync on the phone.** Go to **Settings → Sync**. The address is filled in with the site the app came from. Enter a passphrase (8+ characters; longer is safer) and tap **Turn on sync**.
+   - The first device to turn on sync sets the site's passphrase.
+   - If you forget it, the synced copy can't be read, but each device keeps its own data. To start over, delete and recreate the D1 database.
+4. **Turn on sync on the PC.** Run the desktop app from this branch (the installed app predates sync), go to **Settings → Sync**, and enter the same address and passphrase.
+
+**When it syncs:**
+- when the app starts or the phone app comes back to the foreground;
+- 2 s after each lesson turn;
+- every 5 minutes;
+- on **Sync now**.
+
+A session with a lesson turn running, and the graph while extraction runs, wait for the next pass.
+
+**How it works.**
+- `src/core/sync-merge.ts` holds the rules: what syncs, plus a three-way decision against the last-synced copy.
+- `src/server/sync-engine.ts` runs one pass. It derives keys from the passphrase (PBKDF2, 210k rounds → an AES-GCM key, an HMAC key and an access token), encrypts names and contents, and stores its base in `data/.sync/` (never synced, never in backups).
+- `src/server/sync.ts` owns the settings, the triggers and the status, and the same code runs on the desktop server and on the phone.
+- `cloud/sync-worker.ts` is the service on D1:
+  - the first token it sees becomes the site's token (only its hash is stored);
+  - uploads are staged and then committed with a revision check, so a stale write gets `409` and the device retries;
+  - files are kept in 1 MB chunks.
+- The phone's service worker caches only the app's own build files. `/sync/` and `/api/` always go to the network. An early build cached a sync reply, and a later pass then deleted a session. The smoke test now checks for this.
+
 ## The native apps (Phase 5)
 
 The same web app, wrapped by Capacitor in `mobile/native`. That folder has its own `package.json` and lockfile, so the desktop lockfile never changes. Owner decisions:
@@ -221,13 +255,14 @@ npm run mobile:smoke   # dev build + the end-to-end browser check below
 7. The drawer opens over the page and closes on navigation. Settings shows Tavily and hides Brave, Deepgram and the desktop-only sections.
 8. Backup produces a desktop-layout zip without keys, with added files under `files/`.
 9. Restore of a zipped desktop folder replaces the phone's sessions and keeps the key.
-10. Everything survives a reload, and the app starts offline from the service worker.
-11. A save survives reloading the app the instant it lands (4 of 4 fresh runs).
-12. Nothing else left the page, and there were no page errors.
+10. Sync: turn on sync in Settings → Sync against the real Worker code (on a SQLite stand-in for D1). The phone's session reaches a simulated PC, the PC's new session reaches the phone on Sync now, and the offline cache holds only the app's own files.
+11. Everything survives a reload, and the app starts offline from the service worker.
+12. A save survives reloading the app the instant it lands (4 of 4 fresh runs).
+13. Nothing else left the page, and there were no page errors.
 
 It passes on both the dev and the minified build.
 
-Unit tests: `tests/browser-shims.test.ts` checks the shims against real Node. `tests/browser-backup.test.ts` covers the zip codec (including interop with `zip`/`unzip`), finding the data folder in a zip, restore keeping the keys, and added files in backups.
+Unit tests: `tests/browser-shims.test.ts` checks the shims against real Node. `tests/browser-backup.test.ts` covers the zip codec (including interop with `zip`/`unzip`), finding the data folder in a zip, restore keeping the keys, and added files in backups. `tests/sync-merge.test.ts` covers the sync rules. `tests/sync.test.ts` runs two devices through the real Worker code on SQLite: newest session wins, graph merge both ways, deletions, busy files, ciphertext at rest, wrong passphrase, and the stale-write `409`.
 
 The browser engines in `src/browser/headless.ts` were also checked directly in Chromium during development:
 - a broken demo's console error, uncaught error and failed image load were all caught;
@@ -247,4 +282,5 @@ The demo and visual-maker *jobs* use these same engines through the same job run
 - **Jina Reader without an account is rate-limited**, so heavy research may hit its limits. It also sees the URLs the researcher reads.
 - **Fonts load from Google on first launch**, then come from the cache.
 - **The native apps haven't run on a device yet.** The Android APK builds and its contents check out. The iOS project hasn't been built (no Mac). The share-sheet backup path, Back button handling and status-bar layout need a first look on a real phone.
+- **Sync hasn't run against real Cloudflare D1 yet.** It was tested against the same Worker code on a SQLite stand-in. On the PC it needs the desktop app run from this branch.
 - **Bundle:** about 4 MB of JS gzipped in total, split into lazily loaded chunks. The startup shell is 2.9 MB minified.

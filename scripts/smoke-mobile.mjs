@@ -22,6 +22,10 @@
  *   5. Settings → Phone data saves a backup zip (keys excluded) and restores
  *      a zipped desktop data folder, replacing the phone's sessions;
  *   6. after a reload the restored data is still there (IndexedDB);
+ *   6b. sync: the phone turns on sync (Settings → Sync) against the real
+ *      Worker code on an in-process D1 stand-in; a simulated PC with the
+ *      same passphrase receives the phone's sessions, and its own new
+ *      session reaches the phone;
  *   7. offline, the app still starts (service worker app shell);
  *   8. a save survives reloading the app the instant it lands.
  *
@@ -34,6 +38,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import * as esbuild from "esbuild";
 
 // require(), not import: a globally installed Playwright is found via NODE_PATH.
 const { chromium, devices } = createRequire(import.meta.url)("playwright");
@@ -50,8 +56,36 @@ const TYPES = {
 	".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml",
 	".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".map": "application/json",
 };
-const server = http.createServer((req, res) => {
+// The sync service, in-process: the real Worker (cloud/sync-worker.ts) on a
+// SQLite stand-in for D1, plus the sync engine for a simulated PC.
+const syncBundle = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "lh-smoke-sync-")), "sync.mjs");
+await esbuild.build({
+	stdin: {
+		contents: `export { handleSync } from "./cloud/sync-worker.ts"; export { fakeD1 } from "./tests/fake-d1.ts"; export { syncOnce, deriveSyncKeys } from "./src/server/sync-engine.ts";`,
+		resolveDir: ROOT,
+		loader: "ts",
+	},
+	bundle: true,
+	platform: "node",
+	format: "esm",
+	outfile: syncBundle,
+	logLevel: "error",
+});
+const syncKit = await import(pathToFileURL(syncBundle).href);
+const syncDB = syncKit.fakeD1();
+const syncService = (input, init) => syncKit.handleSync(new Request(input, init), { DB: syncDB });
+
+const server = http.createServer(async (req, res) => {
 	const pathname = decodeURIComponent(new URL(req.url, "http://x").pathname);
+	if (pathname.startsWith("/sync/")) {
+		const chunks = [];
+		for await (const c of req) chunks.push(c);
+		const body = chunks.length ? Buffer.concat(chunks) : undefined;
+		const answer = await syncService(`http://127.0.0.1${req.url}`, { method: req.method, headers: req.headers, body: req.method === "GET" || req.method === "HEAD" ? undefined : body });
+		res.writeHead(answer.status, Object.fromEntries(answer.headers));
+		res.end(Buffer.from(await answer.arrayBuffer()));
+		return;
+	}
 	// Stand-in for a host's own path (Cloudflare Access's login callback).
 	if (pathname.startsWith("/cdn-cgi/")) {
 		res.writeHead(200, { "Content-Type": "text/plain" }).end("host path reached");
@@ -501,6 +535,47 @@ try {
 	check(keyKept, "restore kept the phone's API key");
 	const gone = await page.evaluate(async (u) => (await fetch(`/api/chats/${u.split("/").pop()}`)).status, chatUrl);
 	check(gone === 404, "restore replaced the phone's previous session");
+
+	// ── 6b. PC ↔ phone sync through the (in-process) sync service ────────
+	await page.getByRole("button", { name: "Open sidebar" }).click();
+	await page.locator("aside").getByText(/^settings$/i).click();
+	await page.locator('[data-testid="settings-nav-sync"]').click();
+	await page.locator('[data-testid="sync-url"]').fill(base);
+	await page.locator('[data-testid="sync-passphrase"]').fill("smoke test passphrase");
+	await page.locator('[data-testid="sync-enable"]').click();
+	await page.locator('[data-testid="sync-on"]').waitFor({ timeout: 30_000 });
+	const sent = await page.locator('[data-testid="sync-status"]').textContent();
+	check(/Last synced/.test(sent ?? "") && !(await page.locator('[data-testid="sync-error"]').count()), `phone turned sync on and synced ("${sent}")`);
+	const cloudFiles = syncDB.raw.prepare("SELECT COUNT(*) AS n FROM files WHERE deleted = 0").get().n;
+	check(cloudFiles > 0, `the phone's data reached the sync service, encrypted (${cloudFiles} files)`);
+
+	// A simulated PC with the same passphrase: gets the phone's sessions,
+	// adds one of its own; the phone's Sync now brings it in.
+	const pcDir = fs.mkdtempSync(path.join(scratch, "pc-"));
+	const pcKeys = await syncKit.deriveSyncKeys("smoke test passphrase");
+	const pcSync = () => syncKit.syncOnce({ dataDir: pcDir, url: base, keys: pcKeys, fetch: (u, i) => syncService(u, i), busy: () => false });
+	await pcSync();
+	const pcChats = fs.readdirSync(path.join(pcDir, "chats"));
+	check(pcChats.includes("chat_desktop_1.json"), `the PC received the phone's sessions (${pcChats.join(", ")})`);
+	const stamp = new Date().toISOString();
+	fs.writeFileSync(
+		path.join(pcDir, "chats", "chat_pc_1.json"),
+		JSON.stringify({ id: "chat_pc_1", title: "Started on the PC", createdAt: stamp, updatedAt: stamp, messages: [], version: 1 }),
+	);
+	await pcSync();
+	// Sync now (the button's request; resolves when the pass is done).
+	await page.evaluate(() => fetch("/api/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "sync" }) }));
+	await page.keyboard.press("Escape");
+	const syncedChats = await page.evaluate(async () => (await (await fetch("/api/chats")).json()).chats.map((c) => c.title));
+	check(syncedChats.includes("Started on the PC"), `the PC's new session arrived on the phone (${JSON.stringify(syncedChats)})`);
+	// The offline cache must never hold a sync reply (a cached file list once
+	// made a later pass delete a session).
+	const cachedSync = await page.evaluate(async () => {
+		const out = [];
+		for (const name of await caches.keys()) for (const req of await (await caches.open(name)).keys()) if (!/^\/(app|chunks|assets|icons|fonts|worklets|siwc|node_modules)\/|^\/(manifest\.webmanifest|index\.html)?$/.test(new URL(req.url).pathname)) out.push(req.url);
+		return out;
+	});
+	check(cachedSync.length === 0, `the offline cache holds only the app's own files${cachedSync.length ? ` (also: ${cachedSync.join(", ")})` : ""}`);
 
 	// ── 7. offline start ─────────────────────────────────────────────────
 	await page.evaluate(async () => {

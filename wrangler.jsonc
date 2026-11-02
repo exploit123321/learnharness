@@ -1,11 +1,13 @@
-// Cloudflare deployment of the PHONE app (docs/mobile.md) — static files
-// only, no server. `wrangler deploy` (Cloudflare's default deploy command)
-// first runs the phone build, then uploads dist-mobile as the Worker's
-// static assets. Without this file Cloudflare auto-detects Next.js and tries
-// to deploy the desktop server instead, which is not what the phone needs.
+// Cloudflare deployment of the PHONE app + its PC ↔ phone sync service
+// (docs/mobile.md). `wrangler deploy` (Cloudflare's default deploy command)
+// first runs the phone build, then uploads dist-mobile as static assets.
+// Only /sync/* reaches the Worker code (cloud/sync-worker.ts); everything
+// else is the static app. Without this file Cloudflare auto-detects Next.js
+// and tries to deploy the desktop server instead.
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "learnharness",
+	"main": "cloud/sync-worker.ts",
 	"compatibility_date": "2026-10-01",
 	"build": {
 		"command": "npm run mobile:dist"
@@ -13,6 +15,15 @@
 	"assets": {
 		"directory": "./dist-mobile",
 		// The app routes on the device: unknown paths get index.html.
-		"not_found_handling": "single-page-application"
-	}
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/sync/*"]
+	},
+	// The sync store. No database_id: Cloudflare creates "learnharness-sync"
+	// on the first deploy and keeps using it.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "learnharness-sync"
+		}
+	]
 }

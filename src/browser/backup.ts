@@ -35,7 +35,8 @@ export const DESKTOP_DATA_FOLDER = {
 
 function dataFiles(): string[] {
 	const prefix = `${BROWSER_DATA_DIR}/`;
-	return allFiles().filter((p) => p.startsWith(prefix) && p !== KEYS_FILE);
+	// .sync/ (sync settings, keys and state) is per device: never backed up.
+	return allFiles().filter((p) => p.startsWith(prefix) && p !== KEYS_FILE && !p.startsWith(`${prefix}.sync/`));
 }
 
 /** Every phone data file (keys excluded) under `data/`, and the added

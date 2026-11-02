@@ -48,6 +48,7 @@ import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { KeysSection } from "./keys-section.tsx";
 import { extraSettingsSections } from "./extra-sections.ts";
+import { SyncSection } from "./sync-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
@@ -62,6 +63,7 @@ const SECTIONS = [
 	{ id: "agent", label: "Agent" },
 	{ id: "appearance", label: "Appearance" },
 	{ id: "graph", label: "Graph" },
+	{ id: "sync", label: "Sync" },
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
 	{ id: "general", label: "General" },
 ] as const;
@@ -430,6 +432,11 @@ export function SettingsDialogBody({
 									testid="section-keyboard"
 								>
 									<KeyboardSection />
+								</SettingsSection>
+							)}
+							{active === "sync" && (
+								<SettingsSection title="Sync" hint="PC ↔ phone, through your Cloudflare site" testid="section-sync">
+									<SyncSection />
 								</SettingsSection>
 							)}
 							{extraSettingsSections().map(
